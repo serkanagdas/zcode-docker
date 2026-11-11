@@ -1,0 +1,156 @@
+name: Build ZCode image
+
+on:
+  schedule:
+    # Daily at 04:23 Turkey time (01:23 UTC). Runs on default branch.
+    - cron: "23 1 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/zcode.yml'
+      - 'Dockerfile'
+      - 'docker-entrypoint.sh'
+      - '.dockerignore'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: zcode-docker-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out Docker packaging repository
+        uses: actions/checkout@v4
+
+      - name: Find upstream ZCode revision
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream_sha="$(git ls-remote https://github.com/zai-org/ZCode.git refs/heads/main | cut -f1)"
+          test -n "$upstream_sha"
+          short_sha="${upstream_sha:0:12}"
+          owner_lower="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$owner_lower/zcode" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip unchanged upstream revisions on scheduled runs
+        id: decision
+        shell: bash
+        env:
+          IMAGE: ${{ steps.upstream.outputs.image }}
+          SHORT_SHA: ${{ steps.upstream.outputs.short_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "schedule" ]] && docker buildx imagetools inspect "$IMAGE:sha-$SHORT_SHA" >/dev/null 2>&1; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Already published $IMAGE:sha-$SHORT_SHA; skipping."
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out exact upstream ZCode commit
+        if: steps.decision.outputs.build == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: zai-org/ZCode
+          ref: ${{ steps.upstream.outputs.sha }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Set up pinned Node.js version
+        if: steps.decision.outputs.build == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.14.0'
+
+      - name: Install pinned pnpm
+        if: steps.decision.outputs.build == 'true'
+        run: npm install --global pnpm@10.33.2
+
+      - name: Install ZCode dependencies and build Web distribution
+        if: steps.decision.outputs.build == 'true'
+        working-directory: upstream
+        env:
+          CI: 'true'
+          HUSKY: '0'
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm build:zcode --base-url https://example.invalid/zcode/
+
+      - name: Extract ZCode runtime
+        if: steps.decision.outputs.build == 'true'
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./upstream/package.json').version")"
+          tarball="upstream/dist/zcode/releases/${version}/zcode-${version}.tar.gz"
+          test -f "$tarball"
+          mkdir -p image/runtime
+          tar -xzf "$tarball" -C image/runtime
+          test -f image/runtime/zcode/bin/zcode.mjs
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test Web runtime locally
+        if: steps.decision.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node image/runtime/zcode/bin/zcode.mjs --version
+          ZCODE_DATA_BASE_DIR="$(mktemp -d)" node image/runtime/zcode/bin/zcode.mjs --web --host 127.0.0.1 --port 3099 --workspace /tmp --no-open > zcode-smoke.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3099/ >/dev/null 2>&1; then
+              echo "Web smoke test passed"
+              exit 0
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat zcode-smoke.log
+              exit 1
+            fi
+            sleep 2
+          done
+          cat zcode-smoke.log
+          exit 1
+
+      - name: Set up Docker Buildx
+        if: steps.decision.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and publish image (amd64)
+        if: steps.decision.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.upstream.outputs.image }}:sha-${{ steps.upstream.outputs.short_sha }}
+            ${{ steps.upstream.outputs.image }}:v${{ steps.version.outputs.version }}
+            ${{ steps.upstream.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.upstream.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}

@@ -1,0 +1,19 @@
+# For edoor / Arcane. Replace YOUR_GITHUB_USERNAME in the image name.
+services:
+  zcode:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/zcode:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3030:3030"
+    environment:
+      ZCODE_WEB_TOKEN: ${ZCODE_WEB_TOKEN:?Define ZCODE_WEB_TOKEN in Arcane stack environment or a local .env file}
+    volumes:
+      - zcode-data:/home/zcode/.zcode
+      - zcode-workspace:/workspace
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+
+volumes:
+  zcode-data:
+  zcode-workspace:
