@@ -106,30 +106,58 @@ jobs:
               }
             }
           '
-          # 2. Bundle all @zcode/* workspace packages into packages/server/dist/entry-http.js
-          #    (upstream issue #1069: @zcode/provider, @zcode/provider-node, @zcode/session-control, etc. export raw .ts files)
+          # 2. Fix packages/server/tsup.config.ts:
+          #    - Add banner defining __filename / __dirname for ESM
+          #    - Inline all @zcode/* workspace packages
+          #    - Externalize @larksuiteoapi/node-sdk
           node -e '
             const fs = require("fs");
             const p = "packages/server/tsup.config.ts";
             let src = fs.readFileSync(p, "utf8");
             src = src.replace(
+              "export const SERVER_HTTP_EXTERNAL_DEPENDENCIES = [",
+              "export const SERVER_HTTP_EXTERNAL_DEPENDENCIES = [\n  \"@larksuiteoapi/node-sdk\","
+            );
+            src = src.replace(
               /noExternal:\s*\[[\s\S]*?\],/,
-              `noExternal: [/^@zcode\\//, "@agentclientprotocol/sdk", "chokidar", "croner", "ignore", "smol-toml", "zod"],`
+              `splitting: false,\n  banner: {\n    js: \x27import { fileURLToPath as __zcodeFileURLToPath } from "node:url"; import { dirname as __zcodeDirname } from "node:path"; const __filename = __zcodeFileURLToPath(import.meta.url); const __dirname = __zcodeDirname(__filename);\x27,\n  },\n  noExternal: [/^@zcode\\//],`
             );
             fs.writeFileSync(p, src);
           '
-          # 3. Ensure runtimePackageNames in scripts/zcode-distribution/assets.mjs includes @napi-rs/keyring and @larksuiteoapi/node-sdk
+          # 3. Auto-discover and copy all bare module specifiers imported by server/entry-http.js into the packaged runtime
           node -e '
             const fs = require("fs");
             const p = "scripts/zcode-distribution/assets.mjs";
             let src = fs.readFileSync(p, "utf8");
-            const extraPkgs = [
-              "@napi-rs/keyring",
-              "@larksuiteoapi/node-sdk",
-              "zod"
-            ];
-            const inject = extraPkgs.map(x => `  "${x}",`).join("\n");
-            src = src.replace("const runtimePackageNames = [", "const runtimePackageNames = [\n" + inject);
+            const oldFn = "export async function copyRuntimeNodeModules(packageRoot) {\n  const requireFromServer = createRequire(resolve(root, \"packages\", \"server\", \"package.json\"));\n  const seen = new Set();\n  for (const packageName of runtimePackageNames) {";
+            const newFn = `export async function copyRuntimeNodeModules(packageRoot) {
+  const requireFromServer = createRequire(resolve(root, "packages", "server", "package.json"));
+  const requireFromServices = createRequire(resolve(root, "packages", "services", "package.json"));
+  const seen = new Set();
+  const entryHttpCode = await readFile(resolve(root, "packages", "server", "dist", "entry-http.js"), "utf8");
+  const { builtinModules } = await import("node:module");
+  const builtins = new Set(builtinModules);
+  const specRe = /(?:\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\brequire\\s*\\(\\s*|\\bimport\\s+)["\x27]([^"\x27\\n]+)["\x27]/g;
+  const allPackages = new Set(runtimePackageNames);
+  let m;
+  while ((m = specRe.exec(entryHttpCode)) !== null) {
+    const s = m[1];
+    if (!s || s.startsWith(".") || s.startsWith("/") || s.startsWith("node:")) continue;
+    const segs = s.split("/");
+    const pkg = s.startsWith("@") ? segs.slice(0, 2).join("/") : segs[0];
+    if (!pkg || builtins.has(pkg) || pkg.startsWith("@zcode/")) continue;
+    allPackages.add(pkg);
+  }
+  console.log("[zcode] Discovered runtime packages:", [...allPackages]);
+  for (const packageName of allPackages) {`;
+            if (!src.includes(oldFn)) {
+              throw new Error("Could not find copyRuntimeNodeModules header in assets.mjs");
+            }
+            src = src.replace(oldFn, newFn);
+            src = src.replace(
+              "requireFrom: requireFromServer,",
+              "requireFrom: (() => { try { requireFromServer.resolve(packageName + \"/package.json\"); return requireFromServer; } catch { return requireFromServices; } })(),"
+            );
             fs.writeFileSync(p, src);
           '
           pnpm install --frozen-lockfile --config.confirmModulesPurge=false
