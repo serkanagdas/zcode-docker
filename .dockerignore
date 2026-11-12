@@ -1,7 +1,6 @@
 .git
 .github
 upstream
-**/node_modules
 **/.env
 **/.env.*
 *.log
