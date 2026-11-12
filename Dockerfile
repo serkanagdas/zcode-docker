@@ -9,7 +9,7 @@ RUN apt-get update \
 
 RUN groupadd --gid 10001 zcode \
  && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin zcode \
- && mkdir -p /opt/zcode /workspace \
+ && mkdir -p /opt/zcode /workspace /home/zcode/.zcode \
  && chown -R zcode:zcode /workspace /home/zcode
 
 COPY --chown=10001:10001 image/runtime/zcode/ /opt/zcode/
