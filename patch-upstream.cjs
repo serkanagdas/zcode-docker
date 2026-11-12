@@ -29,6 +29,21 @@ if (fs.existsSync(entryHttpPath)) {
   }
 }
 
+// 2b. Patch packages/services/src/node.ts so standalone Web HTTP server uses projectStorageHostId = "local"
+//     allowing the Web UI (which calls readProjects/readDirectory/prepareSession with default local hostId)
+//     to browse directories, open projects, and start draft sessions without "project.remote-project-required".
+const servicesNodePath = "packages/services/src/node.ts";
+if (fs.existsSync(servicesNodePath)) {
+  let src = fs.readFileSync(servicesNodePath, "utf8");
+  const oldBlock =
+    '  const projectStorageHostId = remoteHostIdFromWorkspaceIdentity(\n    buildServerRemoteWorkspaceIdentity({ serverId: options.sourceServerId, workspacePath: "/" }),\n  );';
+  if (!src.includes(oldBlock)) {
+    throw new Error("Could not find projectStorageHostId block in packages/services/src/node.ts");
+  }
+  src = src.replace(oldBlock, '  const projectStorageHostId = "local";');
+  fs.writeFileSync(servicesNodePath, src);
+}
+
 // 3. Fix packages/server/tsup.config.ts:
 //    - Add banner defining require, __filename, and __dirname for ESM so bundled CJS deps work
 //    - Inline all @zcode/* workspace packages
