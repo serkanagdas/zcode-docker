@@ -94,7 +94,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pnpm install --frozen-lockfile
+          # Disable Electron postinstall rebuild inside @zcode/desktop since we only build the Web/CLI distribution
+          node -e '
+            const fs = require("fs");
+            const p = "packages/desktop/package.json";
+            if (fs.existsSync(p)) {
+              const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+              if (pkg.scripts && pkg.scripts.postinstall) {
+                delete pkg.scripts.postinstall;
+                fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+              }
+            }
+          '
+          pnpm install --frozen-lockfile --config.confirmModulesPurge=false
+          # Prepare workspace dist files (e.g. packages/shared/dist) required by stageTuiRuntime / collectSeaTuiAssets
+          pnpm build:sea:prepare
           pnpm build:zcode --base-url https://example.invalid/zcode/
 
       - name: Extract ZCode runtime
