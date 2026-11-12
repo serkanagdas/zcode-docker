@@ -12,8 +12,19 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3030:3030"
-    environment:
-      ZCODE_WEB_TOKEN: ${ZCODE_WEB_TOKEN:?Define ZCODE_WEB_TOKEN in Arcane stack environment or a local .env file}
+    command:
+      - node
+      - /opt/zcode/bin/zcode.mjs
+      - --web
+      - --workspace
+      - /workspace
+      - --host
+      - 0.0.0.0
+      - --port
+      - "3030"
+      - --no-open
+      - --no-token
+    entrypoint: []
     volumes:
       - zcode-data:/home/zcode/.zcode
       - zcode-workspace:/workspace
