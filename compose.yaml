@@ -1,7 +1,14 @@
-# For edoor / Arcane. Replace YOUR_GITHUB_USERNAME in the image name.
+name: zcode
+
+x-arcane:
+  icon: zcode
+  urls:
+    - "https://edoor.taila48207.ts.net:10040"
+
 services:
   zcode:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/zcode:latest
+    image: ghcr.io/serkanagdas/zcode:latest
+    container_name: zcode
     restart: unless-stopped
     ports:
       - "127.0.0.1:3030:3030"
@@ -10,6 +17,10 @@ services:
     volumes:
       - zcode-data:/home/zcode/.zcode
       - zcode-workspace:/workspace
+      - projects:/projects
+    networks:
+      - default
+      - ai-gateway
     security_opt:
       - no-new-privileges:true
     pids_limit: 512
@@ -17,3 +28,10 @@ services:
 volumes:
   zcode-data:
   zcode-workspace:
+  projects:
+    external: true
+    name: openahands_openhands_projects
+
+networks:
+  ai-gateway:
+    external: true
