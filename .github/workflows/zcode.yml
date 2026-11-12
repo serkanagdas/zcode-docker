@@ -106,8 +106,26 @@ jobs:
               }
             }
           '
+          # Ensure runtimePackageNames in scripts/zcode-distribution/assets.mjs includes all external dependencies of server/entry-http.js
+          node -e '
+            const fs = require("fs");
+            const p = "scripts/zcode-distribution/assets.mjs";
+            let src = fs.readFileSync(p, "utf8");
+            const extraPkgs = [
+              "@napi-rs/keyring",
+              "@agentclientprotocol/sdk",
+              "@larksuiteoapi/node-sdk",
+              "chokidar",
+              "croner",
+              "ignore",
+              "smol-toml",
+              "zod"
+            ];
+            const inject = extraPkgs.map(x => `  "${x}",`).join("\n");
+            src = src.replace("const runtimePackageNames = [", "const runtimePackageNames = [\n" + inject);
+            fs.writeFileSync(p, src);
+          '
           pnpm install --frozen-lockfile --config.confirmModulesPurge=false
-          # Prepare workspace dist files (e.g. packages/shared/dist) required by stageTuiRuntime / collectSeaTuiAssets
           pnpm build:sea:prepare
           pnpm build:zcode --base-url https://example.invalid/zcode/
 
