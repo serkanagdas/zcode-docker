@@ -94,7 +94,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Disable Electron postinstall rebuild inside @zcode/desktop since we only build the Web/CLI distribution
+          # 1. Disable Electron postinstall rebuild inside @zcode/desktop since we only build the Web/CLI distribution
           node -e '
             const fs = require("fs");
             const p = "packages/desktop/package.json";
@@ -106,19 +106,26 @@ jobs:
               }
             }
           '
-          # Ensure runtimePackageNames in scripts/zcode-distribution/assets.mjs includes all external dependencies of server/entry-http.js
+          # 2. Bundle all @zcode/* workspace packages into packages/server/dist/entry-http.js
+          #    (upstream issue #1069: @zcode/provider, @zcode/provider-node, @zcode/session-control, etc. export raw .ts files)
+          node -e '
+            const fs = require("fs");
+            const p = "packages/server/tsup.config.ts";
+            let src = fs.readFileSync(p, "utf8");
+            src = src.replace(
+              /noExternal:\s*\[[\s\S]*?\],/,
+              `noExternal: [/^@zcode\\//, "@agentclientprotocol/sdk", "chokidar", "croner", "ignore", "smol-toml", "zod"],`
+            );
+            fs.writeFileSync(p, src);
+          '
+          # 3. Ensure runtimePackageNames in scripts/zcode-distribution/assets.mjs includes @napi-rs/keyring and @larksuiteoapi/node-sdk
           node -e '
             const fs = require("fs");
             const p = "scripts/zcode-distribution/assets.mjs";
             let src = fs.readFileSync(p, "utf8");
             const extraPkgs = [
               "@napi-rs/keyring",
-              "@agentclientprotocol/sdk",
               "@larksuiteoapi/node-sdk",
-              "chokidar",
-              "croner",
-              "ignore",
-              "smol-toml",
               "zod"
             ];
             const inject = extraPkgs.map(x => `  "${x}",`).join("\n");
@@ -127,6 +134,7 @@ jobs:
           '
           pnpm install --frozen-lockfile --config.confirmModulesPurge=false
           pnpm build:sea:prepare
+          pnpm --filter @zcode/zcode-cua build
           pnpm build:zcode --base-url https://example.invalid/zcode/
 
       - name: Extract ZCode runtime
