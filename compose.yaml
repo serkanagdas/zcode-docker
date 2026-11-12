@@ -17,7 +17,7 @@ services:
       - /opt/zcode/bin/zcode.mjs
       - --web
       - --workspace
-      - /workspace
+      - /projects
       - --host
       - 0.0.0.0
       - --port
@@ -32,6 +32,8 @@ services:
     networks:
       - default
       - ai-gateway
+      - gitlab_default
+      - postgres-dev-net
     security_opt:
       - no-new-privileges:true
     pids_limit: 512
@@ -46,3 +48,9 @@ volumes:
 networks:
   ai-gateway:
     external: true
+  gitlab_default:
+    external: true
+    name: gitlab_default
+  postgres-dev-net:
+    external: true
+    name: postgres-dev-net
